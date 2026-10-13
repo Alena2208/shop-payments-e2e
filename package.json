@@ -1,0 +1,20 @@
+{
+  "name": "shop-payments-e2e",
+  "version": "1.0.0",
+  "description": "Risk-based E2E, API and integration tests for a checkout & payments flow (Playwright + TypeScript)",
+  "private": true,
+  "scripts": {
+    "start:app": "tsx app/start.ts",
+    "test": "playwright test",
+    "test:api": "playwright test --project=api",
+    "test:ui": "playwright test --project=ui",
+    "report": "playwright show-report",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

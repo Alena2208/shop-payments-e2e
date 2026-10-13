@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test Shop</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 2rem auto; padding: 0 1rem; }
+    .row { display: flex; align-items: center; gap: .75rem; margin: .5rem 0; }
+    input { padding: .4rem; }
+    button { padding: .4rem .9rem; cursor: pointer; }
+    #status { font-weight: 600; min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <h1>Test Shop</h1>
+  <div id="products"></div>
+  <p>Total: <strong data-testid="total">0.00 EUR</strong></p>
+  <button data-testid="place-order">Place order</button>
+
+  <section id="checkout" hidden>
+    <h2>Checkout</h2>
+    <p>Order <code data-testid="order-id"></code></p>
+    <div class="row">
+      <label>Card number <input data-testid="card-number" inputmode="numeric" autocomplete="off"></label>
+      <button data-testid="pay-button">Pay</button>
+    </div>
+  </section>
+
+  <p id="status" data-testid="status" role="status"></p>
+
+<script>
+  const cart = {};
+  let products = [];
+  let order = null;
+  let payKey = null;
+
+  const fmt = (cents) => (cents / 100).toFixed(2) + ' EUR';
+  const $ = (id) => document.querySelector('[data-testid="' + id + '"]');
+  const setStatus = (text) => { $('status').textContent = text; };
+  const total = () => products.reduce((sum, p) => sum + p.price * (cart[p.id] || 0), 0);
+
+  function render() {
+    $('total').textContent = fmt(total());
+    products.forEach((p) => { $('qty-' + p.id).textContent = cart[p.id] || 0; });
+  }
+
+  async function init() {
+    products = await (await fetch('/api/products')).json();
+    const box = document.getElementById('products');
+    products.forEach((p) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<span>' + p.name + ' (' + fmt(p.price) + ')</span>' +
+        '<button data-testid="add-' + p.id + '">Add</button>' +
+        '<span>qty: <span data-testid="qty-' + p.id + '">0</span></span>';
+      row.querySelector('button').onclick = () => { cart[p.id] = (cart[p.id] || 0) + 1; render(); };
+      box.appendChild(row);
+    });
+    render();
+  }
+
+  $('place-order').onclick = async () => {
+    const items = Object.entries(cart).filter(([, q]) => q > 0).map(([productId, quantity]) => ({ productId, quantity }));
+    if (items.length === 0) { setStatus('Cart is empty'); return; }
+    $('place-order').disabled = true;
+    const res = await fetch('/api/orders', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }),
+    });
+    order = await res.json();
+    payKey = crypto.randomUUID();
+    $('order-id').textContent = order.id;
+    document.getElementById('checkout').hidden = false;
+    setStatus('');
+  };
+
+  async function waitForFinalState() {
+    for (;;) {
+      const o = await (await fetch('/api/orders/' + order.id)).json();
+      if (o.status !== 'payment_pending') return o;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  $('pay-button').onclick = async () => {
+    $('pay-button').disabled = true;
+    setStatus('Processing payment...');
+    const res = await fetch('/api/orders/' + order.id + '/pay', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': payKey },
+      body: JSON.stringify({ card: $('card-number').value }),
+    });
+    if (res.status === 409) { setStatus('Order cannot be paid'); return; }
+    if (res.status !== 202 && res.status !== 200) {
+      setStatus('Payment failed');
+      payKey = crypto.randomUUID();
+      $('pay-button').disabled = false;
+      return;
+    }
+    const final = await waitForFinalState();
+    if (final.status === 'paid') {
+      setStatus('Payment successful');
+    } else if (final.status === 'payment_failed') {
+      setStatus('Payment failed');
+      payKey = crypto.randomUUID(); // a new attempt needs a new idempotency key
+      $('pay-button').disabled = false;
+    } else {
+      setStatus('Payment needs review: ' + final.status);
+    }
+  };
+
+  init();
+</script>
+</body>
+</html>
